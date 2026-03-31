@@ -6,6 +6,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -43,3 +46,52 @@ jobs:
           name: ${{ matrix.artifact_name }}
           path: dist-native/**
           if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: PalworldDexHelper-macOS-native
+          path: release-artifacts/macos
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: PalworldDexHelper-Windows-native
+          path: release-artifacts/windows
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          cp release-artifacts/macos/PalworldDexHelper.zip release-assets/PalworldDexHelper-macOS-native.zip
+          cp release-artifacts/windows/PalworldDexHelper.zip release-assets/PalworldDexHelper-Windows-native.zip
+
+      - name: Move latest-build tag to current commit
+        run: |
+          git tag -f latest-build "${GITHUB_SHA}"
+          git push origin refs/tags/latest-build --force
+
+      - name: Publish rolling prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-build
+          name: Latest Build
+          prerelease: true
+          overwrite_files: true
+          generate_release_notes: true
+          files: |
+            release-assets/PalworldDexHelper-macOS-native.zip
+            release-assets/PalworldDexHelper-Windows-native.zip
+          body: |
+            自动更新的桌面构建包。
+
+            - 分支：`${{ github.ref_name }}`
+            - 提交：`${{ github.sha }}`
+            - 运行：`${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`

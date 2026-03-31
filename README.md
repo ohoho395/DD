@@ -26,9 +26,15 @@
 
 - 推送到 `main` 后会自动构建
 - 也可以在 Actions 页面手动触发 `Build Native Desktop Packages`
-- 构建完成后会产出两个 artifacts：
-  - `PalworldDexHelper-macOS-native`
-  - `PalworldDexHelper-Windows-native`
+- 构建完成后会自动刷新 `Releases` 里的 `Latest Build` 预发布版本
+- `Releases` 页面会直接提供两个下载包：
+  - `PalworldDexHelper-macOS-native.zip`
+  - `PalworldDexHelper-Windows-native.zip`
+
+下载入口：
+
+- `Releases`：`https://github.com/ohoho395/DD/releases`
+- `Actions`：`https://github.com/ohoho395/DD/actions`
 
 ## 本地原生构建
 
