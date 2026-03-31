@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import os
+import socket
 import sys
 import threading
 import time
-import urllib.request
 import webbrowser
 from pathlib import Path
 
@@ -39,6 +39,12 @@ def resolve_log_path(project_dir: Path) -> Path:
     return project_dir / "launcher.log"
 
 
+def resolve_runtime_dir(project_dir: Path) -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return project_dir
+
+
 def write_launch_log(log_path: Path, message: str) -> None:
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -48,17 +54,25 @@ def write_launch_log(log_path: Path, message: str) -> None:
 
 def wait_for_server(url: str, log_path: Path, timeout_seconds: float = 18.0) -> bool:
     deadline = time.time() + timeout_seconds
-    status_url = url.rstrip("/") + "/api/status"
-    request = urllib.request.Request(status_url, headers={"User-Agent": "PalworldDexHelper"})
+    host = "127.0.0.1"
+    port = 8765
+    request_bytes = (
+        b"GET /api/status HTTP/1.1\r\n"
+        b"Host: 127.0.0.1:8765\r\n"
+        b"Connection: close\r\n\r\n"
+    )
     while time.time() < deadline:
         try:
-            with urllib.request.urlopen(request, timeout=1.2) as response:
-                if 200 <= response.status < 300:
-                    write_launch_log(log_path, f"server ready: {status_url}")
-                    return True
-        except Exception:
+            with socket.create_connection((host, port), timeout=1.2) as sock:
+                sock.sendall(request_bytes)
+                payload = sock.recv(128)
+            if b" 200 " in payload:
+                write_launch_log(log_path, f"server ready: {url.rstrip('/')}/api/status")
+                return True
+        except Exception as exc:
+            write_launch_log(log_path, f"server wait retry: {exc!r}")
             time.sleep(0.35)
-    write_launch_log(log_path, f"server readiness timed out: {status_url}")
+    write_launch_log(log_path, f"server readiness timed out: {url.rstrip('/')}/api/status")
     return False
 
 
@@ -71,10 +85,13 @@ def open_browser_when_ready(url: str, log_path: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     argv = argv or []
     project_dir = resolve_project_dir()
+    runtime_dir = resolve_runtime_dir(project_dir)
     log_path = resolve_log_path(project_dir)
     os.environ["PALWORLD_HELPER_PROJECT_DIR"] = str(project_dir)
+    os.environ["PALWORLD_HELPER_RUNTIME_DIR"] = str(runtime_dir)
     os.chdir(project_dir)
     write_launch_log(log_path, f"launch start, project_dir={project_dir}")
+    write_launch_log(log_path, f"runtime_dir={runtime_dir}")
 
     try:
         import serve_helper
