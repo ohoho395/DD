@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>帕鲁栖息地本地地图</title>
+  <link rel="stylesheet" href="./vendor/leaflet/leaflet.css?v=20260331d">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #10202a;
+      --panel: rgba(16, 32, 42, 0.92);
+      --line: rgba(255, 255, 255, 0.12);
+      --text: #f2faf8;
+      --muted: rgba(242, 250, 248, 0.72);
+      --accent: #4fd3b1;
+      --danger: #ff7b7b;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      background: radial-gradient(circle at top, rgba(79, 211, 177, 0.12), transparent 22%), #08131a;
+      color: var(--text);
+      font-family: "Avenir Next", "Trebuchet MS", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    body {
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .toolbar strong {
+      font-size: 0.98rem;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-weight: 700;
+    }
+
+    .tag.accent {
+      background: rgba(79, 211, 177, 0.16);
+      color: var(--accent);
+    }
+
+    #map {
+      position: relative;
+      min-height: 420px;
+      width: 100%;
+      height: 100%;
+    }
+
+    .message {
+      position: absolute;
+      z-index: 900;
+      left: 14px;
+      top: 14px;
+      max-width: min(460px, calc(100% - 28px));
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(8, 19, 26, 0.88);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      line-height: 1.55;
+      backdrop-filter: blur(8px);
+    }
+
+    .single-marker {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--danger);
+      border: 2px solid rgba(255, 255, 255, 0.92);
+      box-shadow: 0 0 0 6px rgba(255, 123, 123, 0.18);
+    }
+  </style>
+</head>
+<body>
+  <header class="toolbar">
+    <strong id="map-title">本地栖息地地图</strong>
+    <span id="map-mode" class="tag accent">白天</span>
+    <span id="map-count" class="tag">0 个点位</span>
+    <span id="map-status" class="tag">等待加载</span>
+  </header>
+  <main id="map"></main>
+
+  <script src="./vendor/leaflet/leaflet.js?v=20260331d"></script>
+  <script src="./generated/pal-map-data.js?v=20260331d"></script>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code") || "";
+    const mode = params.get("mode") === "night" ? "night" : "day";
+    const label = params.get("label") || code || "未知帕鲁";
+    const payload = window.PALWORLD_LOCAL_MAPS;
+    const titleEl = document.getElementById("map-title");
+    const modeEl = document.getElementById("map-mode");
+    const countEl = document.getElementById("map-count");
+    const statusEl = document.getElementById("map-status");
+
+    modeEl.textContent = mode === "night" ? "夜晚" : "白天";
+
+    if (!payload || !payload.config || !payload.pals) {
+      mountMessage("本地地图数据还没准备好。先运行一次同步，再回来查看。");
+    } else {
+      initLocalMap(payload, code, mode);
+    }
+
+    function initLocalMap(dataset, currentCode, currentMode) {
+      const entry = dataset.pals[currentCode];
+      if (!entry) {
+        mountMessage("没有找到这只帕鲁的本地地图数据。");
+        return;
+      }
+
+      const locations = currentMode === "night" ? entry.night || [] : entry.day || [];
+      const config = dataset.config;
+      const tileDir = (dataset.meta && dataset.meta.imageMapDir ? dataset.meta.imageMapDir : "image/map7/").replace(/\/+$/, "");
+      const mapName = tileDir.split("/").pop();
+      const maxNativeZoom = Math.round(Math.log2(config.minMapTextureBlockSize.X / (dataset.meta.tileSize || 512)));
+      const map = L.map("map", {
+        minZoom: 0,
+        maxZoom: maxNativeZoom + 2,
+        zoom: 1,
+        crs: L.CRS.Simple,
+      });
+
+      const southWest = map.unproject([0, config.minMapTextureBlockSize.Y], maxNativeZoom);
+      const northEast = map.unproject([config.minMapTextureBlockSize.X, 0], maxNativeZoom);
+      const bounds = L.latLngBounds(southWest, northEast);
+      const center = map.unproject([config.minMapTextureBlockSize.X / 2, config.minMapTextureBlockSize.Y / 2], maxNativeZoom);
+
+      map.setMaxBounds(bounds).setView(center, 1);
+      L.tileLayer(`./generated/map-tiles/${mapName}/z{z}x{x}y{y}.webp`, {
+        bounds,
+        errorTileUrl: "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=",
+        maxNativeZoom,
+        noWrap: true,
+        tileSize: dataset.meta.tileSize || 512,
+      }).addTo(map);
+
+      titleEl.textContent = `本地栖息地地图 · ${label}`;
+      countEl.textContent = `${locations.length} 个点位`;
+      statusEl.textContent = "本地地图";
+
+      if (!locations.length) {
+        mountMessage("这只帕鲁当前没有同步到对应时段的野外点位。它可能主要通过头目、特殊刷新、据点事件或配种获取。");
+        return;
+      }
+
+      const markerBounds = [];
+      locations.forEach((pos, index) => {
+        const latlng = map.unproject(transformRposToTpos(pos, config), maxNativeZoom);
+        markerBounds.push(latlng);
+        const label = `${mode === "night" ? "夜晚" : "白天"}点位 ${index + 1}`;
+        if (locations.length === 1) {
+          L.marker(latlng, {
+            icon: L.divIcon({
+              className: "",
+              html: '<div class="single-marker"></div>',
+              iconSize: [16, 16],
+              iconAnchor: [8, 8],
+            }),
+          }).addTo(map).bindTooltip(label);
+          return;
+        }
+        L.circleMarker(latlng, {
+          radius: 5,
+          color: "#ffb4b4",
+          weight: 2,
+          fillColor: "#ff6b6b",
+          fillOpacity: 0.55,
+        }).addTo(map).bindTooltip(label);
+      });
+
+      if (markerBounds.length) {
+        map.fitBounds(L.latLngBounds(markerBounds).pad(0.18));
+      }
+    }
+
+    function transformRposToTpos(rpos, config) {
+      const scaleX = (rpos.X - config.landScapeRealPositionMin.X) / (config.landScapeRealPositionMax.X - config.landScapeRealPositionMin.X);
+      const scaleY = (rpos.Y - config.landScapeRealPositionMin.Y) / (config.landScapeRealPositionMax.Y - config.landScapeRealPositionMin.Y);
+      return [
+        scaleY * config.minMapTextureBlockSize.Y,
+        (1 - scaleX) * config.minMapTextureBlockSize.X,
+      ];
+    }
+
+    function mountMessage(text) {
+      const box = document.createElement("div");
+      box.className = "message";
+      box.textContent = text;
+      document.getElementById("map").appendChild(box);
+      statusEl.textContent = "需要同步";
+    }
+  </script>
+</body>
+</html>

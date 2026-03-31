@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>幻兽帕鲁图鉴助手</title>
+  <link rel="stylesheet" href="./styles.css?v=20260331i">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">本地帕鲁速记</p>
+        <h1>幻兽帕鲁图鉴助手</h1>
+        <p>
+          重点做四件事：快速查帕鲁、快速挑打工位、快速找配种组合、快速规划词条继承。
+          现在还可以把 `paldb.cc` 的岗位榜单、掉落和刷新信息同步到本地缓存，
+          再加上配种收藏、常用亲本记忆和分阶段同步进度，打开页面时就像看你自己的离线图鉴站。
+        </p>
+        <div class="hero-actions">
+          <button id="sync-button" class="action-button primary" type="button">一键同步 paldb.cc</button>
+          <p id="sync-help" class="field-help">
+            如果按钮不可用，请改用同目录下的 <code>start_helper.bat</code>（Windows 版）或 <code>start_helper.command</code>（Mac 版）启动工具。
+          </p>
+          <section id="sync-progress" class="sync-progress-shell" aria-label="同步进度">
+            <div class="sync-progress-head">
+              <strong>同步阶段</strong>
+              <span id="sync-progress-summary" class="badge">等待启动</span>
+            </div>
+            <div class="sync-progress-track">
+              <span id="sync-progress-fill" class="sync-progress-fill"></span>
+            </div>
+            <div id="sync-stage-list" class="sync-stage-list"></div>
+          </section>
+          <pre id="sync-log" class="sync-log">尚未连接同步服务。</pre>
+        </div>
+      </div>
+      <div class="hero-stats">
+        <article class="stat-card">
+          <span>图鉴条目</span>
+          <strong id="meta-pal-count">-</strong>
+        </article>
+        <article class="stat-card">
+          <span>配种组合</span>
+          <strong id="meta-breed-count">-</strong>
+        </article>
+        <article class="stat-card accent">
+          <span>数据版本</span>
+          <strong id="meta-version">-</strong>
+        </article>
+        <article class="stat-card">
+          <span>最近同步</span>
+          <strong id="meta-sync-status">未同步</strong>
+        </article>
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab-button active" data-view="dex">图鉴</button>
+      <button class="tab-button" data-view="workers">打工推荐</button>
+      <button class="tab-button" data-view="breeding">配种工具</button>
+      <button class="tab-button" data-view="about">说明</button>
+    </nav>
+
+    <main>
+      <section id="view-dex" class="view active">
+        <div class="layout-two">
+          <aside class="panel panel-list">
+            <div class="panel-head">
+              <h2>图鉴检索</h2>
+              <span id="dex-count-badge" class="badge">0 条</span>
+            </div>
+            <div class="control-stack">
+              <label>
+                搜索名称 / 编号
+                <input id="dex-search" type="text" placeholder="例如：阿努比斯 / Anubis / #100">
+              </label>
+              <div class="control-grid">
+                <label>
+                  打工筛选
+                  <select id="dex-job-filter"></select>
+                </label>
+                <label>
+                  入手阶段
+                  <select id="dex-stage-filter"></select>
+                </label>
+              </div>
+              <label class="checkbox-row">
+                <input id="dex-night-filter" type="checkbox">
+                <span>只看夜行帕鲁</span>
+              </label>
+            </div>
+            <div id="dex-list" class="pal-list"></div>
+          </aside>
+
+          <section class="panel detail-panel">
+            <div id="pal-detail" class="detail-empty">从左边点一只帕鲁开始看。</div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-workers" class="view">
+        <div class="layout-two">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>打工推荐</h2>
+              <span class="badge accent-badge">按岗位筛</span>
+            </div>
+            <div class="control-grid wide-gap">
+              <label>
+                目标岗位
+                <select id="worker-job-filter"></select>
+              </label>
+              <label>
+                当前阶段
+                <select id="worker-stage-filter"></select>
+              </label>
+            </div>
+            <label class="checkbox-row">
+              <input id="worker-night-filter" type="checkbox">
+              <span>夜班优先</span>
+            </label>
+            <p id="worker-ranking-note" class="field-help"></p>
+            <div id="worker-results" class="recommend-grid"></div>
+          </section>
+
+          <aside class="panel">
+            <div class="panel-head">
+              <h2>牧场常用位</h2>
+              <span class="badge">手动整理</span>
+            </div>
+            <div id="farm-specialists" class="farm-grid"></div>
+
+            <div class="panel-subsection">
+              <h3>打工思路</h3>
+              <div id="work-tips" class="tip-list"></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="view-breeding" class="view">
+        <div class="layout-breeding">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>查目标直出组合</h2>
+              <span class="badge accent-badge">精确配种表</span>
+            </div>
+            <div class="control-grid wide-gap">
+              <label>
+                目标帕鲁
+                <select id="breeding-child-select"></select>
+              </label>
+              <label>
+                结果排序
+                <select id="breeding-child-sort">
+                  <option value="ease">好配优先</option>
+                  <option value="early">前期父母优先</option>
+                  <option value="clean">避开自体优先</option>
+                  <option value="favorite">收藏优先</option>
+                </select>
+              </label>
+            </div>
+            <div id="featured-targets" class="chip-row"></div>
+            <div id="breeding-child-results" class="combo-grid"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>查父母会出什么</h2>
+              <span class="badge">双向查</span>
+            </div>
+            <div class="control-grid wide-gap">
+              <label>
+                亲本 1
+                <select id="breeding-parent-1"></select>
+              </label>
+              <label>
+                亲本 2
+                <select id="breeding-parent-2"></select>
+              </label>
+            </div>
+            <div class="control-grid wide-gap compact-controls">
+              <label>
+                子代排序
+                <select id="breeding-pair-sort">
+                  <option value="stage">前期优先</option>
+                  <option value="work">实用度优先</option>
+                  <option value="number">图鉴编号</option>
+                  <option value="favorite">收藏优先</option>
+                </select>
+              </label>
+              <div class="memory-note">
+                <span class="badge">本地记忆</span>
+                <p class="field-help">会自动记住你常用的亲本组合，也可以把喜欢的结果单独收藏。</p>
+              </div>
+            </div>
+            <div id="breeding-pair-results" class="pair-result"></div>
+
+            <div class="panel-subsection">
+              <div class="panel-head">
+                <h3>收藏与常用</h3>
+                <div class="memory-toolbar">
+                  <span class="badge">本地保存</span>
+                  <button id="clear-favorites" class="mini-button" type="button">清空收藏</button>
+                  <button id="clear-recents" class="mini-button" type="button">清空常用</button>
+                </div>
+              </div>
+              <div class="memory-layout">
+                <section class="memory-block">
+                  <h4>收藏组合</h4>
+                  <div id="favorite-combos" class="memory-grid"></div>
+                </section>
+                <section class="memory-block">
+                  <h4>常用亲本</h4>
+                  <div id="recent-pairs" class="memory-grid"></div>
+                </section>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel panel-span-all">
+            <div class="panel-head">
+              <h2>词条继承攻略</h2>
+              <span class="badge accent-badge">本地规划工具</span>
+            </div>
+            <div class="trait-guide-grid">
+              <div class="trait-guide-inputs">
+                <label>
+                  目标词条
+                  <textarea id="trait-target-input" rows="4" placeholder="每行一个，或用逗号分隔，例如：工匠精神，社畜，认真，节食"></textarea>
+                </label>
+
+                <div class="trait-preset-block">
+                  <div class="panel-head compact-head">
+                    <h3>常用模板</h3>
+                    <span class="badge">一键填充</span>
+                  </div>
+                  <div id="trait-preset-list" class="chip-row"></div>
+                </div>
+
+                <div class="control-grid wide-gap">
+                  <label>
+                    毕业目标
+                    <select id="trait-goal-select">
+                      <option value="two">先稳 2 词条</option>
+                      <option value="three">3 词条成型</option>
+                      <option value="four">4 词条毕业</option>
+                    </select>
+                  </label>
+                  <label>
+                    规划方向
+                    <select id="trait-role-select">
+                      <option value="worker">打工</option>
+                      <option value="combat">战斗</option>
+                      <option value="mount">坐骑</option>
+                      <option value="general">通用</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div class="memory-toolbar">
+                  <button id="trait-swap-button" class="mini-button primary" type="button">交换 A / B</button>
+                  <button id="trait-clear-button" class="mini-button rose" type="button">清空攻略</button>
+                </div>
+
+                <label>
+                  亲本 A 已有词条
+                  <textarea id="trait-parent1-input" rows="4" placeholder="例如：工匠精神，认真"></textarea>
+                </label>
+
+                <label>
+                  亲本 B 已有词条
+                  <textarea id="trait-parent2-input" rows="4" placeholder="例如：社畜，节食"></textarea>
+                </label>
+              </div>
+
+              <div class="trait-guide-output">
+                <div id="trait-guide-summary" class="guide-card-grid"></div>
+                <div id="trait-guide-steps" class="tip-list"></div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-about" class="view">
+        <div class="layout-two">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>怎么用</h2>
+              <span class="badge">本地离线优先</span>
+            </div>
+            <div class="tip-list">
+              <article class="tip-card">
+                <h3>图鉴页</h3>
+                <p>搜名称、图鉴编号或英文名，右侧会显示打工适应性、野外等级区间，以及同步回来的刷新概览、掉落和昼夜信息。</p>
+              </article>
+              <article class="tip-card">
+                <h3>打工推荐页</h3>
+                <p>按岗位和阶段筛选；如果你跑过同步脚本，这里会优先采用 paldb.cc 的岗位榜单顺序。</p>
+              </article>
+              <article class="tip-card">
+                <h3>配种页</h3>
+                <p>既能反查“某只帕鲁怎么直出”，也能正查“这对父母会出什么”。现在还支持排序、收藏组合和常用亲本记忆。</p>
+              </article>
+              <article class="tip-card">
+                <h3>同步数据</h3>
+                <p>运行同目录下的 `sync_paldb.py`，或直接点击顶部“一键同步 paldb.cc”，就能把榜单、详情和本地地图缓存刷新到最新。</p>
+              </article>
+              <article class="tip-card">
+                <h3>词条继承攻略</h3>
+                <p>填入目标词条和两只亲本当前已有的词条后，页面会给出覆盖情况、杂词条压力、推荐亲本分工和下一步配种节奏。</p>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>数据说明</h2>
+              <span class="badge">来源透明</span>
+            </div>
+            <div id="source-list" class="source-list"></div>
+            <div class="panel-subsection">
+              <h3>注意</h3>
+              <div class="tip-list">
+                <article class="tip-card">
+                  <p>如果你还没做过同步，页面会先显示本地基础数据；同步完成后会自动优先显示 paldb.cc 的刷新、掉落和岗位榜单缓存。</p>
+                </article>
+                <article class="tip-card">
+                  <p>词条继承攻略目前是本地规划工具，侧重“拆目标、看覆盖、清杂词”，不会替你穷举所有中间代，但足够用来安排毕业路线。</p>
+                </article>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="./data.js?v=20260331i"></script>
+  <script src="./synced-data.js?v=20260331i"></script>
+  <script src="./app.js?v=20260331i"></script>
+</body>
+</html>
