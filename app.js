@@ -1614,7 +1614,7 @@ async function triggerSync() {
 
 async function refreshSyncStatus() {
   try {
-    const response = await fetchSyncEndpoint("/api/status", { cache: "no-store" });
+    const response = await fetchSyncEndpoint("/api/status", { cache: "no-store" }, state.syncServiceAvailable ? 1 : 4);
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
@@ -1627,8 +1627,8 @@ async function refreshSyncStatus() {
     state.syncInFlight = false;
     refs.syncButton.disabled = false;
     refs.syncHelp.textContent = isFileMode()
-      ? "本机同步服务还没连上。请先双击 start_helper.command（macOS）或 start_helper.bat（Windows），再回到这个页面刷新。"
-      : "同步服务未连接。请关闭当前页面，再用 start_helper.command（macOS）或 start_helper.bat（Windows）重新打开工具。";
+      ? "本机同步服务还没连上。请先重新打开桌面程序；源码模式下可用 start_helper.command（macOS）或 start_helper.bat（Windows）。"
+      : "同步服务暂时没连上。请先等几秒；如果仍然这样，请重新打开桌面程序（Windows 通常是 PalworldDexHelper.exe）。";
     refs.syncLog.textContent = `无法连接本地同步服务：${error.message}`;
     renderSyncProgress(null);
   }
@@ -1764,18 +1764,46 @@ function isFileMode() {
   return window.location.protocol === "file:";
 }
 
-async function fetchSyncEndpoint(path, options = {}) {
+function wait(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function buildSyncEndpointCandidates(relativePath) {
+  const candidates = [];
+  const addCandidate = (value) => {
+    if (!value || candidates.includes(value)) {
+      return;
+    }
+    candidates.push(value);
+  };
+
+  if (!isFileMode()) {
+    addCandidate(relativePath);
+    if (window.location.origin && window.location.origin !== "null") {
+      addCandidate(`${window.location.origin}${relativePath}`);
+    }
+  }
+
+  addCandidate(`${DEFAULT_SYNC_SERVICE_ORIGIN}${relativePath}`);
+  addCandidate(`${FALLBACK_SYNC_SERVICE_ORIGIN}${relativePath}`);
+  return candidates;
+}
+
+async function fetchSyncEndpoint(path, options = {}, retryCount = 1) {
   const relativePath = path.startsWith("/") ? path : `/${path}`;
-  const candidates = isFileMode()
-    ? [`${DEFAULT_SYNC_SERVICE_ORIGIN}${relativePath}`, `${FALLBACK_SYNC_SERVICE_ORIGIN}${relativePath}`]
-    : [relativePath];
+  const candidates = buildSyncEndpointCandidates(relativePath);
 
   let lastError = null;
-  for (const candidate of candidates) {
-    try {
-      return await fetch(candidate, options);
-    } catch (error) {
-      lastError = error;
+  for (let attempt = 0; attempt < retryCount; attempt += 1) {
+    for (const candidate of candidates) {
+      try {
+        return await fetch(candidate, options);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (attempt < retryCount - 1) {
+      await wait(450);
     }
   }
   throw lastError || new Error("同步服务未响应");

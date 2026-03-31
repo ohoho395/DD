@@ -339,7 +339,7 @@ def main(argv: list[str]) -> int:
     try:
         server = ThreadingHTTPServer((args.host, args.port), HelperHandler)
     except OSError as exc:
-        if exc.errno == 48:
+        if exc.errno in {48, 98, 10048}:
             print(f"[serve] already running at {url}")
             if not args.no_open:
                 threading.Timer(0.2, lambda: webbrowser.open(url)).start()
