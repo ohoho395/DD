@@ -7,6 +7,8 @@ import os
 import re
 import sys
 import threading
+import time
+import traceback
 import webbrowser
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -22,8 +24,10 @@ def resolve_project_dir() -> Path:
 
 
 PROJECT_DIR = resolve_project_dir()
+RUNTIME_DIR = Path(os.environ.get("PALWORLD_HELPER_RUNTIME_DIR", str(PROJECT_DIR))).expanduser().resolve()
 SYNC_DATA_PATH = PROJECT_DIR / "paldb-sync.json"
 SYNC_LOG_PATH = PROJECT_DIR / "sync.log"
+SERVICE_LOG_PATH = RUNTIME_DIR / "service.log"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 RANKING_STAGE_TOTAL = 12
@@ -46,27 +50,44 @@ class SyncRuntime:
         self.last_exit_code: int | None = None
 
     def status(self) -> dict:
-        with self.lock:
-            syncing = self.worker_thread is not None and self.worker_thread.is_alive()
-            last_exit_code = self.last_exit_code
+        try:
+            with self.lock:
+                syncing = self.worker_thread is not None and self.worker_thread.is_alive()
+                last_exit_code = self.last_exit_code
 
-        synced_at = None
-        if SYNC_DATA_PATH.exists():
-            try:
-                payload = json.loads(SYNC_DATA_PATH.read_text(encoding="utf-8"))
-                synced_at = payload.get("meta", {}).get("syncedAt")
-            except json.JSONDecodeError:
-                synced_at = None
+            synced_at = None
+            if SYNC_DATA_PATH.exists():
+                try:
+                    payload = json.loads(SYNC_DATA_PATH.read_text(encoding="utf-8"))
+                    synced_at = payload.get("meta", {}).get("syncedAt")
+                except json.JSONDecodeError:
+                    synced_at = None
 
-        log_text = read_log_text()
+            log_text = read_log_text()
 
-        return {
-            "syncing": syncing,
-            "lastExitCode": last_exit_code,
-            "syncedAt": synced_at,
-            "logTail": read_log_tail(log_text),
-            "progress": build_sync_progress(log_text, syncing, last_exit_code, synced_at),
-        }
+            return {
+                "syncing": syncing,
+                "lastExitCode": last_exit_code,
+                "syncedAt": synced_at,
+                "logTail": read_log_tail(log_text),
+                "progress": build_sync_progress(log_text, syncing, last_exit_code, synced_at),
+            }
+        except Exception as exc:  # pragma: no cover - defensive runtime fallback for packaged app
+            write_service_log(f"status() failed: {exc!r}")
+            write_service_log(traceback.format_exc().rstrip())
+            fallback_log = read_log_text() if SYNC_LOG_PATH.exists() else ""
+            return {
+                "syncing": False,
+                "lastExitCode": None,
+                "syncedAt": None,
+                "logTail": read_log_tail(fallback_log),
+                "progress": {
+                    "overall": 0.0,
+                    "summary": "同步服务已连接，但状态读取失败，请看 service.log",
+                    "currentStage": "",
+                    "stages": [],
+                },
+            }
 
     def start_sync(self) -> dict:
         with self.lock:
@@ -109,6 +130,17 @@ def read_log_text() -> str:
     if not SYNC_LOG_PATH.exists():
         return ""
     return SYNC_LOG_PATH.read_text(encoding="utf-8", errors="replace")
+
+
+def write_service_log(message: str) -> None:
+    timestamp = threading.current_thread().name
+    SERVICE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with SERVICE_LOG_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(f"[{time_stamp()}][{timestamp}] {message}\n")
+
+
+def time_stamp() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def read_log_tail(log_text: str, line_limit: int = 28) -> str:
@@ -284,18 +316,31 @@ class HelperHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(PROJECT_DIR), **kwargs)
 
     def do_GET(self) -> None:
-        parsed = urlparse(self.path)
-        if parsed.path == "/api/status":
-            self._send_json(RUNTIME.status())
-            return
-        super().do_GET()
+        try:
+            parsed = urlparse(self.path)
+            if parsed.path == "/api/ping":
+                self._send_json({"ok": True, "projectDir": str(PROJECT_DIR)})
+                return
+            if parsed.path == "/api/status":
+                self._send_json(RUNTIME.status())
+                return
+            super().do_GET()
+        except Exception as exc:  # pragma: no cover - defensive runtime fallback
+            write_service_log(f"GET {self.path} failed: {exc!r}")
+            write_service_log(traceback.format_exc().rstrip())
+            self._send_json({"ok": False, "error": repr(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def do_POST(self) -> None:
-        parsed = urlparse(self.path)
-        if parsed.path == "/api/sync":
-            self._send_json(RUNTIME.start_sync(), status=HTTPStatus.ACCEPTED)
-            return
-        self.send_error(HTTPStatus.NOT_FOUND)
+        try:
+            parsed = urlparse(self.path)
+            if parsed.path == "/api/sync":
+                self._send_json(RUNTIME.start_sync(), status=HTTPStatus.ACCEPTED)
+                return
+            self.send_error(HTTPStatus.NOT_FOUND)
+        except Exception as exc:  # pragma: no cover - defensive runtime fallback
+            write_service_log(f"POST {self.path} failed: {exc!r}")
+            write_service_log(traceback.format_exc().rstrip())
+            self._send_json({"ok": False, "error": repr(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def do_OPTIONS(self) -> None:
         self.send_response(HTTPStatus.NO_CONTENT)
@@ -336,10 +381,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     url = f"http://{args.host}:{args.port}/"
+    write_service_log(f"serve start host={args.host} port={args.port} project_dir={PROJECT_DIR} runtime_dir={RUNTIME_DIR}")
     try:
         server = ThreadingHTTPServer((args.host, args.port), HelperHandler)
     except OSError as exc:
         if exc.errno in {48, 98, 10048}:
+            write_service_log(f"serve bind reused existing listener at {url}: {exc!r}")
             print(f"[serve] already running at {url}")
             if not args.no_open:
                 threading.Timer(0.2, lambda: webbrowser.open(url)).start()

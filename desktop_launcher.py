@@ -54,7 +54,7 @@ def write_launch_log(log_path: Path, message: str) -> None:
 
 def build_status_request(host: str, port: int) -> bytes:
     return (
-        f"GET /api/status HTTP/1.1\r\n"
+        f"GET /api/ping HTTP/1.1\r\n"
         f"Host: {host}:{port}\r\n"
         f"Connection: close\r\n\r\n"
     ).encode("ascii")
@@ -111,7 +111,7 @@ def wait_for_server(url: str, host: str, port: int, log_path: Path, timeout_seco
     while time.time() < deadline:
         ready, preview = probe_status(host, port)
         if ready:
-            write_launch_log(log_path, f"server ready: {url.rstrip('/')}/api/status")
+            write_launch_log(log_path, f"server ready: {url.rstrip('/')}/api/ping")
             return True
 
         now = time.time()
@@ -120,7 +120,7 @@ def wait_for_server(url: str, host: str, port: int, log_path: Path, timeout_seco
             last_preview = preview
             last_log_at = now
         time.sleep(0.35)
-    write_launch_log(log_path, f"server readiness timed out: {url.rstrip('/')}/api/status")
+    write_launch_log(log_path, f"server readiness timed out: {url.rstrip('/')}/api/ping")
     return False
 
 
