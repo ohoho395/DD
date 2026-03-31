@@ -158,7 +158,10 @@ def build_args() -> list[str]:
     )
     include_file(
         args,
-        ensure_runtime_stub("paldb-sync.json", "{\n  \"meta\": null,\n  \"pals\": {},\n  \"jobRankings\": {}\n}\n"),
+        ensure_runtime_stub(
+            "paldb-sync.json",
+            "{\n  \"meta\": {\n    \"syncedAt\": null\n  },\n  \"pals\": {},\n  \"jobRankings\": {}\n}\n",
+        ),
         "bundle",
     )
     include_file(

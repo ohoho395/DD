@@ -59,7 +59,10 @@ class SyncRuntime:
             if SYNC_DATA_PATH.exists():
                 try:
                     payload = json.loads(SYNC_DATA_PATH.read_text(encoding="utf-8"))
-                    synced_at = payload.get("meta", {}).get("syncedAt")
+                    if isinstance(payload, dict):
+                        meta = payload.get("meta") or {}
+                        if isinstance(meta, dict):
+                            synced_at = meta.get("syncedAt")
                 except json.JSONDecodeError:
                     synced_at = None
 
