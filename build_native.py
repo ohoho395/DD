@@ -169,6 +169,7 @@ def build_args() -> list[str]:
         ensure_runtime_stub("generated/pal-map-data.js", "window.PALWORLD_LOCAL_MAPS = null;\n"),
         "bundle/generated",
     )
+    include_optional_dir(args, PROJECT_DIR / "raw", "bundle/raw")
     include_optional_dir(args, PROJECT_DIR / "assets", "bundle/assets")
     include_optional_dir(args, PROJECT_DIR / "generated" / "map-tiles", "bundle/generated/map-tiles")
     include_optional_dir(args, PROJECT_DIR / "vendor", "bundle/vendor")
