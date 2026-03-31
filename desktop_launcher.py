@@ -52,32 +52,80 @@ def write_launch_log(log_path: Path, message: str) -> None:
         handle.write(f"[{timestamp}] {message}\n")
 
 
-def wait_for_server(url: str, log_path: Path, timeout_seconds: float = 18.0) -> bool:
+def build_status_request(host: str, port: int) -> bytes:
+    return (
+        f"GET /api/status HTTP/1.1\r\n"
+        f"Host: {host}:{port}\r\n"
+        f"Connection: close\r\n\r\n"
+    ).encode("ascii")
+
+
+def probe_status(host: str, port: int, timeout_seconds: float = 1.2) -> tuple[bool, str]:
+    try:
+        with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
+            sock.sendall(build_status_request(host, port))
+            payload = sock.recv(160)
+    except Exception as exc:
+        return False, repr(exc)
+
+    preview = payload.decode("latin-1", errors="replace").replace("\r", "\\r").replace("\n", "\\n")
+    return b" 200 " in payload, preview[:140]
+
+
+def reserve_preferred_port(host: str, port: int) -> bool:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind((host, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+def choose_port(host: str, preferred_port: int, log_path: Path) -> int:
+    ready, preview = probe_status(host, preferred_port, timeout_seconds=0.5)
+    if ready:
+        write_launch_log(log_path, f"reusing helper on {host}:{preferred_port}")
+        return preferred_port
+
+    if reserve_preferred_port(host, preferred_port):
+        write_launch_log(log_path, f"using preferred port {preferred_port}")
+        return preferred_port
+
+    if preview:
+        write_launch_log(log_path, f"preferred port {preferred_port} is occupied: {preview}")
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind((host, 0))
+        port = sock.getsockname()[1]
+
+    write_launch_log(log_path, f"fallback port selected: {port}")
+    return port
+
+
+def wait_for_server(url: str, host: str, port: int, log_path: Path, timeout_seconds: float = 18.0) -> bool:
     deadline = time.time() + timeout_seconds
-    host = "127.0.0.1"
-    port = 8765
-    request_bytes = (
-        b"GET /api/status HTTP/1.1\r\n"
-        b"Host: 127.0.0.1:8765\r\n"
-        b"Connection: close\r\n\r\n"
-    )
+    last_preview = ""
+    last_log_at = 0.0
     while time.time() < deadline:
-        try:
-            with socket.create_connection((host, port), timeout=1.2) as sock:
-                sock.sendall(request_bytes)
-                payload = sock.recv(128)
-            if b" 200 " in payload:
-                write_launch_log(log_path, f"server ready: {url.rstrip('/')}/api/status")
-                return True
-        except Exception as exc:
-            write_launch_log(log_path, f"server wait retry: {exc!r}")
-            time.sleep(0.35)
+        ready, preview = probe_status(host, port)
+        if ready:
+            write_launch_log(log_path, f"server ready: {url.rstrip('/')}/api/status")
+            return True
+
+        now = time.time()
+        if preview != last_preview or now - last_log_at >= 2.0:
+            write_launch_log(log_path, f"server wait retry: {preview}")
+            last_preview = preview
+            last_log_at = now
+        time.sleep(0.35)
     write_launch_log(log_path, f"server readiness timed out: {url.rstrip('/')}/api/status")
     return False
 
 
-def open_browser_when_ready(url: str, log_path: Path) -> None:
-    wait_for_server(url, log_path)
+def open_browser_when_ready(url: str, host: str, port: int, log_path: Path) -> None:
+    wait_for_server(url, host, port, log_path)
     webbrowser.open(url)
     write_launch_log(log_path, f"browser opened: {url}")
 
@@ -96,9 +144,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         import serve_helper
 
-        url = f"http://{serve_helper.HOST}:{serve_helper.DEFAULT_PORT}/"
-        threading.Thread(target=open_browser_when_ready, args=(url, log_path), daemon=True).start()
-        exit_code = serve_helper.main(["--no-open", *argv])
+        host = serve_helper.HOST
+        port = choose_port(host, serve_helper.DEFAULT_PORT, log_path)
+        url = f"http://{host}:{port}/"
+        write_launch_log(log_path, f"target url={url}")
+        threading.Thread(target=open_browser_when_ready, args=(url, host, port, log_path), daemon=True).start()
+        exit_code = serve_helper.main(["--no-open", "--port", str(port), *argv])
         write_launch_log(log_path, f"launch exit code={exit_code}")
         return exit_code
     except Exception as exc:  # pragma: no cover - defensive logging for packaged app startup
